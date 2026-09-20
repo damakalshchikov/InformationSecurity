@@ -33,7 +33,7 @@ UsersDialog::UsersDialog(AccountStore &store, QWidget *parent)
     , m_store(store)
 {
     setWindowTitle(QStringLiteral("Список пользователей"));
-    resize(560, 320);
+    resize(700, 340);
 
     m_table = new QTableWidget(this);
     m_table->setColumnCount(ColCount);
@@ -41,6 +41,10 @@ UsersDialog::UsersDialog(AccountStore &store, QWidget *parent)
                                         QStringLiteral("Блокировка"),
                                         QStringLiteral("Парольное ограничение")});
     m_table->horizontalHeader()->setSectionResizeMode(ColName, QHeaderView::Stretch);
+    /* столбцы с флажками подгоняются под содержимое, иначе длинный заголовок
+       «Парольное ограничение» обрезается */
+    m_table->horizontalHeader()->setSectionResizeMode(ColBlock, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(ColRestrict, QHeaderView::ResizeToContents);
     m_table->verticalHeader()->setVisible(false);
     m_table->setSelectionMode(QAbstractItemView::NoSelection);
 
