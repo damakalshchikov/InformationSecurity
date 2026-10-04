@@ -8,7 +8,7 @@
 
 #include <QAction>
 #include <QApplication>
-#include <QCoreApplication>
+#include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QMenu>
 #include <QMenuBar>
@@ -32,12 +32,11 @@ const unsigned kMaxEnterCount = 3;
 
 } // namespace
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(AccountStore &store, QWidget *parent)
     : QMainWindow(parent)
-    // файл с учетными записями располагается рядом с исполняемым файлом
-    , m_store(QCoreApplication::applicationDirPath() + QStringLiteral("/" SECFILE))
+    , m_store(store)
 {
-    setWindowTitle(QStringLiteral("Лабораторная работа №1"));
+    setWindowTitle(QStringLiteral("Лабораторная работа №3"));
     resize(640, 400);
 
     createMenus();
@@ -57,15 +56,24 @@ MainWindow::MainWindow(QWidget *parent)
     layout->addStretch();
     setCentralWidget(central);
 
-    /* если файл с учетными записями пользователей не существует
-       (первый запуск программы), то он создается автоматически */
-    if (!m_store.exists() && !m_store.createWithAdmin()) {
-        QMessageBox::critical(this, windowTitle(),
-                              QStringLiteral("Не удалось создать файл учетных записей:\n%1")
-                                      .arg(m_store.fileName()));
-    }
-
     applyPermissions();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    /* учетные записи шифруются заново (с новым случайным значением), чтобы
+       отразить сделанные изменения; прежнее содержимое файла стирается */
+    while (!m_store.save()) {
+        const auto answer = QMessageBox::critical(
+                this, windowTitle(),
+                QStringLiteral("Не удалось записать зашифрованный файл учетных записей:\n%1\n\n"
+                               "Повторить попытку? Если выйти без сохранения, "
+                               "изменения будут потеряны.").arg(m_store.fileName()),
+                QMessageBox::Retry | QMessageBox::Close);
+        if (answer == QMessageBox::Close)
+            break;
+    }
+    event->accept();
 }
 
 void MainWindow::createMenus()

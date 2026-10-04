@@ -1,9 +1,10 @@
 #include "account.h"
 
+#include "cryptofile.h"
+
 #include <QFile>
 
 #include <cstring>
-#include <fstream>
 
 QString accountName(const AccountType &acc)
 {
@@ -48,16 +49,21 @@ AccountStore::AccountStore(const QString &fileName)
 {
 }
 
+AccountStore::~AccountStore()
+{
+    // расшифрованные данные и парольная фраза не должны остаться в памяти
+    wipe(m_data);
+    wipe(m_passphrase);
+}
+
 bool AccountStore::exists() const
 {
     return QFile::exists(m_fileName);
 }
 
-bool AccountStore::createWithAdmin()
+void AccountStore::createWithAdmin(const QString &passphrase)
 {
-    std::ofstream file(m_fileName.toStdString(), std::ios::out | std::ios::binary);
-    if (!file)
-        return false;
+    m_passphrase = passphrase.toUtf8();
 
     // подготовка учетной записи администратора
     AccountType admin;
@@ -67,63 +73,93 @@ bool AccountStore::createWithAdmin()
     admin.Block = false;
     admin.Restrict = true;
 
-    file.write(reinterpret_cast<const char *>(&admin), sizeof(admin));
-    return file.good();
+    m_data = QByteArray(reinterpret_cast<const char *>(&admin), sizeof(admin));
+}
+
+AccountStore::OpenResult AccountStore::open(const QString &passphrase)
+{
+    QFile file(m_fileName);
+    if (!file.open(QIODevice::ReadOnly))
+        return IoError;
+    const QByteArray blob = file.readAll();
+    file.close();
+
+    const QByteArray pass = passphrase.toUtf8();
+    QByteArray plain;
+    if (!decryptData(blob, pass, plain) || plain.size() % sizeof(AccountType) != 0)
+        return WrongPassphrase;
+
+    /* при неверной парольной фразе получается набор случайных байт, поэтому
+       правильность определяется по наличию учетной записи администратора */
+    m_data = plain;
+    AccountType admin;
+    unsigned rec = 0;
+    if (!find(QStringLiteral(ADMINNAME), admin, rec)) {
+        wipe(plain);
+        wipe(m_data);
+        m_data.clear();
+        return WrongPassphrase;
+    }
+    wipe(plain);
+
+    m_passphrase = pass;
+    return Opened;
+}
+
+bool AccountStore::save()
+{
+    const QByteArray blob = encryptData(m_data, m_passphrase);
+
+    QFile file(m_fileName);
+    if (!file.open(QIODevice::ReadWrite))
+        return false;
+
+    // стирание прежнего содержимого файла
+    const qint64 oldSize = file.size();
+    if (oldSize > 0 && file.write(QByteArray(oldSize, '\0')) != oldSize)
+        return false;
+    file.flush();
+
+    file.seek(0);
+    file.resize(0);
+    return file.write(blob) == blob.size() && file.flush();
 }
 
 bool AccountStore::find(const QString &name, AccountType &acc, unsigned &rec) const
 {
-    std::ifstream file(m_fileName.toStdString(), std::ios::in | std::ios::binary);
-    if (!file)
-        return false;
-
-    AccountType current;
-    unsigned index = 0;
-    // последовательное чтение учетных записей и сравнение имен с искомым
-    while (file.read(reinterpret_cast<char *>(&current), sizeof(current))) {
+    // последовательный просмотр учетных записей и сравнение имен с искомым
+    for (unsigned i = 0; i < count(); ++i) {
+        AccountType current;
+        memcpy(&current, m_data.constData() + i * sizeof(AccountType), sizeof(current));
         if (accountName(current) == name) {
             acc = current;
-            rec = index;
+            rec = i;
             return true;
         }
-        ++index;
     }
     return false;
 }
 
 std::vector<AccountType> AccountStore::readAll() const
 {
-    std::vector<AccountType> result;
-    std::ifstream file(m_fileName.toStdString(), std::ios::in | std::ios::binary);
-    if (!file)
-        return result;
-
-    AccountType current;
-    while (file.read(reinterpret_cast<char *>(&current), sizeof(current)))
-        result.push_back(current);
+    std::vector<AccountType> result(count());
+    if (!result.empty())
+        memcpy(result.data(), m_data.constData(), result.size() * sizeof(AccountType));
     return result;
 }
 
 bool AccountStore::update(unsigned rec, const AccountType &acc)
 {
-    std::fstream file(m_fileName.toStdString(),
-                      std::ios::in | std::ios::out | std::ios::binary);
-    if (!file)
+    if (rec >= count())
         return false;
-
-    // смещение к началу изменяемой учетной записи
-    file.seekp(static_cast<std::streamoff>(rec) * sizeof(AccountType), std::ios::beg);
-    file.write(reinterpret_cast<const char *>(&acc), sizeof(acc));
-    return file.good();
+    // замена учетной записи с номером rec
+    m_data.replace(rec * sizeof(AccountType), sizeof(acc),
+                   reinterpret_cast<const char *>(&acc), sizeof(acc));
+    return true;
 }
 
 bool AccountStore::append(const AccountType &acc)
 {
-    std::ofstream file(m_fileName.toStdString(),
-                       std::ios::out | std::ios::app | std::ios::binary);
-    if (!file)
-        return false;
-
-    file.write(reinterpret_cast<const char *>(&acc), sizeof(acc));
-    return file.good();
+    m_data.append(reinterpret_cast<const char *>(&acc), sizeof(acc));
+    return true;
 }

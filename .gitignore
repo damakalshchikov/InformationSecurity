@@ -2,7 +2,7 @@
 build/
 Makefile
 .qmake.stash
-lab1
+lab3
 
 # файл с учетными записями создается программой при первом запуске
 security.db
